@@ -1,0 +1,4 @@
+variable,min,q1,median,q3,max,iqr,n_outliers
+perf,2,7,10,12,18,5,0
+belief,0,6,10,12,20,6,0
+belief_gap,-10,-4,-1,2,16,6,7

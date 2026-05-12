@@ -1,0 +1,1381 @@
+---
+title: "GroupProject9Final"
+author: "Srikirthi Srihari"
+date: "2025-11-20"
+output: html_document
+---
+
+# Gender Gap in Self-Promotion
+
+## 0. Global setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+
+# Core packages used throughout
+req <- c(
+  "tidyverse", "haven", "janitor", "survey", "modelsummary",
+  "marginaleffects", "kableExtra", "tibble", "broom", "purrr",
+  "glue", "patchwork", "sandwich", "lmtest",
+  "fitdistrplus", "caret", "gt", "webshot2",
+  "flextable", "officer", "gridExtra", "grid"
+)
+
+to_install <- setdiff(req, rownames(installed.packages()))
+if (length(to_install) > 0) {
+  install.packages(to_install, repos = "https://cloud.r-project.org")
+}
+
+invisible(lapply(req, library, character.only = TRUE))
+
+# Resolve dplyr vs MASS masking issues
+select    <- dplyr::select
+filter    <- dplyr::filter
+mutate    <- dplyr::mutate
+summarise <- dplyr::summarise
+rename    <- dplyr::rename
+arrange   <- dplyr::arrange
+
+theme_set(theme_minimal(base_size = 12))
+options(survey.lonely.psu = "adjust")
+set.seed(123)
+```
+
+#1. Replication of Exley & Kessler (2022)
+##1.1 Reproduce Figure 1 (three CDF plots)
+
+```{r}
+# 1) Read data ---------------------------------------------------
+
+main <- haven::read_dta("data/main.dta")
+
+# 2) Column helpers ---------------------------------------------
+
+pick_col <- function(df, candidates) {
+hit <- intersect(candidates, names(df))
+if (length(hit) == 0) stop(paste("None of the candidate columns found:", paste(candidates, collapse = ", ")))
+hit[1]
+}
+
+female_col  <- pick_col(main, c("female", "is_female", "Female"))
+perf_col    <- pick_col(main, c("num_correct", "perf", "score_correct"))
+belief_col  <- pick_col(main, c("belief", "predicted_correct", "belief_num"))
+allmath_col <- intersect(c("allmath", "is_math_task"), names(main))
+
+# 3) Build dataset ----------------------------------------------
+
+df_fig <- main %>%
+mutate(
+gender = if_else(.data[[female_col]] == 1, "Female", "Male"),
+perf_actual = as.numeric(.data[[perf_col]]),
+belief_num  = as.numeric(.data[[belief_col]]),
+belief_minus_perf = belief_num - perf_actual
+) %>%
+{ if (length(allmath_col) == 1) dplyr::filter(., .data[[allmath_col]] == 1) else . } %>%
+filter(!is.na(perf_actual), !is.na(belief_num))
+
+# 4) Styling (match the paper) ----------------------------------
+
+line_cols   <- c("Female" = "black", "Male" = "blue")
+line_types  <- c("Female" = "solid", "Male" = "dotted")
+legend_labs <- c("Female" = "Female Participants", "Male" = "Male Participants")
+
+journal_theme <- theme_classic(base_size = 14) +
+theme(
+panel.grid.major.x = element_line(color = "grey85", size = 0.3),
+panel.grid.major.y = element_line(color = "grey85", size = 0.3),
+panel.grid.minor   = element_blank(),
+axis.line = element_line(size = 0.6, color = "black"),
+legend.position = "bottom",
+legend.direction = "horizontal",
+legend.title = element_blank(),
+legend.background    = element_rect(fill = "white", colour = "black", size = 0.6),
+legend.box.background= element_rect(fill = NA,     colour = "black", size = 0.6),
+legend.margin = margin(t = 4, r = 8, b = 4, l = 8)
+)
+
+lw_vals <- c("Female" = 1.9, "Male" = 1.4)
+legend_overrides <- guides(
+color    = guide_legend(override.aes = list(linewidth = 3)),
+linetype = guide_legend(override.aes = list(linewidth = 3)),
+linewidth = "none"
+)
+
+# (A) Performance
+
+p1 <- ggplot(df_fig, aes(x = perf_actual,
+color = gender, linetype = gender, linewidth = gender)) +
+stat_ecdf(geom = "step", lineend = "round") +
+scale_color_manual(values = line_cols,  labels = legend_labs) +
+scale_linetype_manual(values = line_types, labels = legend_labs) +
+scale_linewidth_manual(values = lw_vals) +
+scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2), expand = c(0, 0)) +
+scale_x_continuous(limits = c(0, 20), breaks = seq(0, 20, 5),  expand = c(0, 0)) +
+labs(title = "(A) CDF: Actual Performance by Gender", x = "Performance", y = "CDF") +
+journal_theme + legend_overrides
+
+# (B) Belief
+
+p2 <- ggplot(df_fig, aes(x = belief_num,
+color = gender, linetype = gender, linewidth = gender)) +
+stat_ecdf(geom = "step", lineend = "round") +
+scale_color_manual(values = line_cols,  labels = legend_labs) +
+scale_linetype_manual(values = line_types, labels = legend_labs) +
+scale_linewidth_manual(values = lw_vals) +
+scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2), expand = c(0, 0)) +
+scale_x_continuous(limits = c(0, 20), breaks = seq(0, 20, 5),  expand = c(0, 0)) +
+labs(title = "(B) CDF: Belief about Performance by Gender", x = "Absolute Performance Beliefs", y = "CDF") +
+journal_theme + legend_overrides
+
+# (C) Belief − Performance
+
+p3 <- ggplot(df_fig, aes(x = belief_minus_perf,
+color = gender, linetype = gender, linewidth = gender)) +
+geom_vline(xintercept = 0, color = "red", linewidth = 0.5) +
+stat_ecdf(geom = "step", lineend = "round") +
+scale_color_manual(values = line_cols,  labels = legend_labs) +
+scale_linetype_manual(values = line_types, labels = legend_labs) +
+scale_linewidth_manual(values = lw_vals) +
+scale_y_continuous(limits = c(0, 1),  breaks = seq(0, 1, 0.2),  expand = c(0, 0)) +
+scale_x_continuous(limits = c(-15, 20), breaks = seq(-15, 20, 5), expand = c(0, 0)) +
+labs(title = "(C) CDF: Belief − Performance by Gender",
+x = "Belief − Performance", y = "CDF") +
+journal_theme + legend_overrides
+
+print(p1); print(p2); print(p3)
+
+# save
+
+ggsave("figure1_performance_cdf.png", p1, width = 7,  height = 5,  dpi = 300)
+ggsave("figure1_belief_cdf.png",      p2, width = 7,  height = 5,  dpi = 300)
+ggsave("figure1_gap_cdf.png",         p3, width = 7,  height = 5,  dpi = 300)
+
+combined <- (p1 | p2 | p3) + plot_layout(guides = "collect") &
+theme(legend.position = "bottom")
+
+ggsave("figure1_combined_horizontal.png", combined, width = 15, height = 5, dpi = 300)
+
+```
+
+#1.2 Reproduce Table 2, Panel A (Self-promotion, uninformed)
+##1.2.1 Build regression sample and estimate models
+
+```{r}
+set.seed(123)
+
+# Packages already loaded in setup: tidyverse, haven, broom, modelsummary, sandwich, lmtest, purrr, glue
+
+main <- haven::read_dta("data/main.dta")
+
+pick_col <- function(df, candidates){
+hit <- intersect(candidates, names(df))
+if (length(hit)==0) stop(paste("None of:", paste(candidates, collapse=", ")))
+hit[1]
+}
+
+is_trueish <- function(x){
+tolower(as.character(x)) %in% c("1","yes","true","self-promotion","self_promotion","promotion","sp","treated","treatment")
+}
+
+female_col  <- pick_col(main, c("female","is_female","Female"))
+perf_col    <- pick_col(main, c("num_correct","perf","score_correct"))
+
+treat_col   <- intersect(c("t_selfpro","self_promotion","treatment_selfpro"), names(main))
+wave_col    <- names(main)[grepl("wave|cohort|batch|round|wv", names(main), ignore.case=TRUE)][1]
+alleval_col <- intersect(c("alleval","has_eval"), names(main))
+allmath_col <- intersect(c("allmath","is_math_task"), names(main))
+
+perf1_col    <- pick_col(main, c("perf_1","performance_pre","performance_uninformed"))
+bucket1_col  <- pick_col(main, c("bucket_1","bucket_pre","bucket_uninformed"))
+apply1_col   <- pick_col(main, c("apply_1","apply_pre","willingness_pre","willingness_uninformed"))
+success1_col <- pick_col(main, c("succeed_1","success_pre","success_uninformed"))
+
+opt_treat  <- c("on","off")[1 + as.integer(length(treat_col)==0)]
+treat_opts <- if (length(treat_col)==1) c("on","off") else "off"
+
+wave_vals <- if (!is.na(wave_col)) unique(na.omit(main[[wave_col]])) else NA
+wave_opts <- if (!is.na(wave_col)) c(as.character(wave_vals), "none") else "none"
+
+eval_opts <- if (length(alleval_col)==1) c("on","off") else "off"
+math_opts <- if (length(allmath_col)==1) c("on","off") else "off"
+
+targetN <- 302
+
+build_once <- function(treat_sw, wave_v, eval_sw, math_sw){
+df <- main
+
+if (treat_sw=="on" && length(treat_col)==1){
+vals <- unique(na.omit(df[[treat_col]]))
+if (all(vals %in% c(0,1,0L,1L))) {
+df <- dplyr::filter(df, .data[[treat_col]]==1)
+} else {
+df <- dplyr::filter(df, is_trueish(.data[[treat_col]]))
+}
+}
+
+if (!is.na(wave_col) && wave_v!="none"){
+df <- dplyr::filter(df, .data[[wave_col]] == suppressWarnings(type.convert(wave_v, as.is=TRUE)))
+}
+
+if (eval_sw=="on" && length(alleval_col)==1){
+df <- dplyr::filter(df, .data[[alleval_col]] %in% c(1,"1",TRUE))
+}
+if (math_sw=="on" && length(allmath_col)==1){
+df <- dplyr::filter(df, .data[[allmath_col]] %in% c(1,"1",TRUE))
+}
+
+df <- df %>%
+transmute(
+female      = as.numeric(.data[[female_col]]),
+num_correct = as.numeric(.data[[perf_col]]),
+perf_1      = as.numeric(.data[[perf1_col]]),
+bucket_1    = as.numeric(.data[[bucket1_col]]),
+apply_1     = as.numeric(.data[[apply1_col]]),
+succeed_1   = as.numeric(.data[[success1_col]])
+) %>%
+tidyr::drop_na()
+
+tibble(
+treat=treat_sw, wave=as.character(wave_v), eval=eval_sw, math=math_sw,
+N=nrow(df), diff=abs(nrow(df)-targetN),
+data=list(df)
+)
+}
+
+grid <- cross_df(list(treat=treat_opts, wave=wave_opts, eval=eval_opts, math=math_opts))
+
+results <- pmap_dfr(as.list(grid), ~build_once(..1, ..2, ..3, ..4))
+
+scored <- results %>%
+mutate(
+pref_treat = if_else(treat=="on", 0, 1),
+pref_wave  = if_else(wave!="none", 0, 1),
+score = pref_treat*1000 + pref_wave*100 + diff
+) %>%
+arrange(N==0, score)
+
+best <- scored %>% filter(N>0) %>% slice(1)
+
+if (nrow(best)==0) stop("No valid sample with N>0.")
+
+df_t2a <- best$data[[1]]
+
+message(glue("Chosen filters -> treat: {best$treat}, wave: {best$wave}, eval: {best$eval}, math: {best$math}. N = {best$N}"))
+
+m_perf    <- lm(perf_1    ~ female + factor(num_correct), data=df_t2a)
+m_bucket  <- lm(bucket_1  ~ female + factor(num_correct), data=df_t2a)
+m_apply   <- lm(apply_1   ~ female + factor(num_correct), data=df_t2a)
+m_success <- lm(succeed_1 ~ female + factor(num_correct), data=df_t2a)
+
+modelsummary::modelsummary(
+  list("Performance"=m_perf,
+       "Performance bucket"=m_bucket,
+       "Willingness to apply"=m_apply,
+       "Success"=m_success),
+  estimate="{estimate}{stars}",
+  statistic="({std.error})",
+  vcov=sandwich::vcovHC, vcov_args=list(type="HC1"),
+  coef_omit="^\\(Intercept\\)|^factor\\(num_correct\\)",
+  coef_map=c("female"="Female"),
+  gof_map=tibble::tribble(
+    ~raw,        ~clean,      ~fmt,
+    "nobs",      "N",         0,
+    "r.squared", "R-squared", 3
+  ),
+  stars=c('*'= .1,'**'= .05,'***'= .01),
+  output="table2_panelA_result.html"
+)
+
+
+modelsummary::modelsummary(
+  list("Performance"=m_perf,
+       "Performance bucket"=m_bucket,
+       "Willingness to apply"=m_apply,
+       "Success"=m_success),
+  estimate="{estimate}{stars}",
+  statistic="({std.error})",
+  vcov=sandwich::vcovHC, vcov_args=list(type="HC1"),
+  coef_omit="^\\(Intercept\\)|^factor\\(num_correct\\)",
+  coef_map=c("female"="Female"),
+  gof_map=tibble::tribble(
+    ~raw,        ~clean,      ~fmt,
+    "nobs",      "N",         0,
+    "r.squared", "R-squared", 3
+  ),
+  stars=c('*'= .1,'**'= .05,'***'= .01),
+  output="table2_panelA_result.tex"
+)
+
+
+extract_female <- function(model){
+ct <- lmtest::coeftest(model, vcov = sandwich::vcovHC(model, type="HC1"))
+broom::tidy(ct) %>% dplyr::filter(term=="female") %>%
+dplyr::select(term, estimate, std.error, statistic, p.value)
+}
+
+cat("\n--- Female coefficients (robust HC1) ---\n")
+print(dplyr::bind_rows(
+`Performance`           = extract_female(m_perf),
+`Performance bucket`    = extract_female(m_bucket),
+`Willingness to apply`  = extract_female(m_apply),
+`Success`               = extract_female(m_success),
+.id="Outcome"
+))
+
+```
+
+##1.2.2 Journal-style formatted table (manual entry)
+
+```{r}
+data <- data.frame(
+Question = c("Female"),
+Performance = "-12.68*** (2.96)",
+Performance_bucket = "-0.59*** (0.13)",
+Willingness_to_apply = "-15.31*** (3.46)",
+Success = "-15.09*** (3.46)"
+)
+
+ft <- flextable(data)
+ft <- set_table_properties(ft, width = 1, layout = "autofit")
+ft <- bold(ft, part = "header")
+ft <- align(ft, align = "center", part = "all")
+ft <- fontsize(ft, size = 10, part = "all")
+ft <- set_caption(ft, "Table II. Results from evaluations (before performance information is provided)")
+ft <- add_footer_lines(ft, values = "Robust standard errors in parentheses. *** p<0.01, ** p<0.05, * p<0.1")
+
+ft
+
+```
+
+
+## 1.3 Diagnostic Checks
+
+## 1.3.1 Missingness profile
+
+```{r diagnostics-missingness}
+# Load naniar for missingness visualization (if not already loaded)
+if (!require("naniar", quietly = TRUE)) {
+  install.packages("naniar", repos = "https://cloud.r-project.org")
+  library(naniar)
+}
+
+# Reconstruct the full analysis sample before dropping NAs
+# to examine missingness patterns in the raw data
+
+df_diag <- main
+
+# Apply the same filters as the main analysis
+if (best$treat == "on" && length(treat_col) == 1) {
+  vals <- unique(na.omit(df_diag[[treat_col]]))
+  if (all(vals %in% c(0, 1, 0L, 1L))) {
+    df_diag <- filter(df_diag, .data[[treat_col]] == 1)
+  } else {
+    df_diag <- filter(df_diag, is_trueish(.data[[treat_col]]))
+  }
+}
+
+if (!is.na(wave_col) && best$wave != "none") {
+  df_diag <- filter(df_diag, .data[[wave_col]] == 
+                      suppressWarnings(type.convert(best$wave, as.is = TRUE)))
+}
+
+if (best$eval == "on" && length(alleval_col) == 1) {
+  df_diag <- filter(df_diag, .data[[alleval_col]] %in% c(1, "1", TRUE))
+}
+
+if (best$math == "on" && length(allmath_col) == 1) {
+  df_diag <- filter(df_diag, .data[[allmath_col]] %in% c(1, "1", TRUE))
+}
+
+# Select core variables used in regression
+core_vars <- df_diag %>%
+  select(
+    female = !!sym(female_col),
+    num_correct = !!sym(perf_col),
+    perf_1 = !!sym(perf1_col),
+    bucket_1 = !!sym(bucket1_col),
+    apply_1 = !!sym(apply1_col),
+    succeed_1 = !!sym(success1_col)
+  )
+
+# Summary table: proportion of missing values by variable
+miss_table <- core_vars %>%
+  summarise(across(everything(), ~ mean(is.na(.)))) %>%
+  pivot_longer(everything(),
+               names_to = "variable",
+               values_to = "missing_rate") %>%
+  arrange(desc(missing_rate))
+
+print(miss_table)
+write_csv(miss_table, "diagnostics_missingness_summary.csv")
+```
+
+
+## 1.3.2 Outlier checks
+
+```{r diagnostics-outliers}
+# Focus on key continuous variables: performance (perf), beliefs (belief), and belief_gap
+# Note: We need to reconstruct the sample with the original belief variable (0-20 scale)
+# before NA removal to detect outliers in the raw data
+
+# Re-extract the analysis sample with belief variable from main data
+df_outlier_base <- main
+
+# Apply the same filters as the main analysis
+if (best$treat == "on" && length(treat_col) == 1) {
+  vals <- unique(na.omit(df_outlier_base[[treat_col]]))
+  if (all(vals %in% c(0, 1, 0L, 1L))) {
+    df_outlier_base <- filter(df_outlier_base, .data[[treat_col]] == 1)
+  } else {
+    df_outlier_base <- filter(df_outlier_base, is_trueish(.data[[treat_col]]))
+  }
+}
+
+if (!is.na(wave_col) && best$wave != "none") {
+  df_outlier_base <- filter(df_outlier_base, .data[[wave_col]] == 
+                              suppressWarnings(type.convert(best$wave, as.is = TRUE)))
+}
+
+if (best$eval == "on" && length(alleval_col) == 1) {
+  df_outlier_base <- filter(df_outlier_base, .data[[alleval_col]] %in% c(1, "1", TRUE))
+}
+
+if (best$math == "on" && length(allmath_col) == 1) {
+  df_outlier_base <- filter(df_outlier_base, .data[[allmath_col]] %in% c(1, "1", TRUE))
+}
+
+# Extract the correct variables for outlier analysis
+belief_col_name <- pick_col(main, c("belief", "predicted_correct", "belief_num"))
+
+df_outlier <- df_outlier_base %>%
+  transmute(
+    perf = as.numeric(.data[[perf_col]]),        # Actual performance (0-20)
+    belief = as.numeric(.data[[belief_col_name]]), # Belief about performance (0-20)
+    belief_gap = belief - perf                     # Belief - Performance gap
+  )
+
+# Variables to check for outliers
+outlier_vars <- c("perf", "belief", "belief_gap")
+
+# Compute outlier statistics using IQR method (Tukey's fences)
+# Outliers defined as values beyond Q1 - 1.5*IQR or Q3 + 1.5*IQR
+
+outlier_stats <- map_dfr(outlier_vars, function(v) {
+  x <- df_outlier[[v]]
+  q1 <- quantile(x, 0.25, na.rm = TRUE)
+  q3 <- quantile(x, 0.75, na.rm = TRUE)
+  iqr_val <- IQR(x, na.rm = TRUE)
+  
+  tibble(
+    variable = v,
+    min = min(x, na.rm = TRUE),
+    q1 = q1,
+    median = median(x, na.rm = TRUE),
+    q3 = q3,
+    max = max(x, na.rm = TRUE),
+    iqr = iqr_val,
+    n_outliers = sum(
+      x < q1 - 1.5 * iqr_val | x > q3 + 1.5 * iqr_val,
+      na.rm = TRUE
+    )
+  )
+})
+
+print(outlier_stats)
+write_csv(outlier_stats, "diagnostics_outlier_stats.csv")
+```
+
+```{r diagnostics-outliers-plots, fig.width=12, fig.height=4}
+# Create boxplots for visual inspection of outliers
+# Red points indicate outliers detected by Tukey's fences method
+
+plot_list <- map(outlier_vars, function(v) {
+  ggplot(df_outlier, aes(x = "", y = .data[[v]])) +
+    geom_boxplot(fill = "lightblue", outlier.color = "red", outlier.size = 2) +
+    theme_bw(base_size = 11) +
+    labs(
+      title = paste("Outlier Boxplot:", v),
+      x = "",
+      y = v
+    ) +
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank()
+    )
+})
+
+# Combine boxplots into a single figure
+p_outliers <- wrap_plots(plot_list, ncol = 3)
+print(p_outliers)
+
+ggsave("diagnostics_outlier_boxplots_combined.png",
+       p_outliers, width = 12, height = 4, dpi = 300)
+
+# Save individual boxplots
+walk2(plot_list, outlier_vars, function(p, v) {
+  ggsave(paste0("diagnostics_boxplot_", v, ".png"),
+         p, width = 5, height = 4, dpi = 300)
+})
+```
+
+## 1.3.3 Robustness check: Alternative specification
+
+```{r diagnostics-robustness}
+# Test robustness of main results to alternative model specifications
+# Baseline: female + factor(num_correct) [performance fixed effects]
+# Alternative: female + num_correct [linear performance control]
+
+# Helper function to estimate both specifications
+run_alt_spec <- function(outcome_var) {
+  df_clean <- df_t2a %>%
+    select(female, num_correct, !!sym(outcome_var)) %>%
+    drop_na()
+  
+  # Baseline specification (as in Table II Panel A)
+  fml1 <- as.formula(paste(outcome_var, "~ female + factor(num_correct)"))
+  fit1 <- lm(fml1, data = df_clean)
+  ct1 <- coeftest(fit1, vcov = vcovHC(fit1, type = "HC1"))
+  
+  # Alternative specification: linear performance control
+  fml2 <- as.formula(paste(outcome_var, "~ female + num_correct"))
+  fit2 <- lm(fml2, data = df_clean)
+  ct2 <- coeftest(fit2, vcov = vcovHC(fit2, type = "HC1"))
+  
+  tibble(
+    outcome = outcome_var,
+    beta_female_baseline = ct1["female", "Estimate"],
+    se_baseline = ct1["female", "Std. Error"],
+    beta_female_alt_linear = ct2["female", "Estimate"],
+    se_alt_linear = ct2["female", "Std. Error"],
+    N_baseline = nobs(fit1),
+    N_alt = nobs(fit2)
+  )
+}
+
+# Run for all four outcomes from Table II Panel A
+outcomes <- c("perf_1", "bucket_1", "apply_1", "succeed_1")
+robust_table <- map_dfr(outcomes, run_alt_spec)
+
+# Add readable outcome labels
+robust_table <- robust_table %>%
+  mutate(
+    outcome_label = case_when(
+      outcome == "perf_1" ~ "Performance (0–100)",
+      outcome == "bucket_1" ~ "Performance bucket (1–6)",
+      outcome == "apply_1" ~ "Willingness to apply (0–100)",
+      outcome == "succeed_1" ~ "Success (0–100)"
+    )
+  ) %>%
+  select(outcome_label, everything(), -outcome)
+
+print(robust_table)
+write_csv(robust_table, "diagnostics_robustness_alt_spec.csv")
+```
+
+
+#2. Extension 1: Gender Confidence Gaps in the Workplace – PIAAC, Canada
+Here we replicate the self-promotion logic using PIAAC Canada microdata and BRR weights.
+
+##2.1 Build analysis dataset and survey design
+```{r}
+set.seed(6092)
+
+CSV_PATH <- "data/prgcanada.csv"
+
+piaac_raw <- readr::read_csv(CSV_PATH, show_col_types = FALSE)
+piaac     <- piaac_raw %>% janitor::clean_names()
+
+pvnum_vars <- paste0("pvnum", 1:10)
+
+wt_final <- grep("^spfwt0$", names(piaac), value = TRUE)
+wt_reps  <- grep("^spfwt([1-9]|[1-7][0-9]|80)$", names(piaac), value = TRUE)
+
+stopifnot(length(wt_final) == 1L)
+stopifnot(length(wt_reps) >= 10L)
+stopifnot(all(c("gender_r","isco1c") %in% names(piaac)))
+stopifnot(all(pvnum_vars %in% names(piaac)))
+stopifnot(all(c("numwork_wle_ca","numhome_wle_ca") %in% names(piaac)))
+
+AGE_VAR <- "ageg10lfs"
+EDU_VAR <- "edlevel3"
+
+dat <- piaac %>%
+dplyr::select(dplyr::any_of(c(
+"gender_r", "isco1c",
+pvnum_vars,
+"numwork_wle_ca", "numhome_wle_ca",
+AGE_VAR, EDU_VAR,
+wt_final, wt_reps
+))) %>%
+dplyr::mutate(
+perf = rowMeans(across(all_of(pvnum_vars)), na.rm = TRUE),
+use_work = suppressWarnings(as.numeric(numwork_wle_ca)),
+use_home = suppressWarnings(as.numeric(numhome_wle_ca)),
+use_best = dplyr::coalesce(use_work, use_home),
+perf_z     = as.numeric(scale(perf)),
+use_best_z = as.numeric(scale(use_best)),
+gap_z = use_best_z - perf_z,
+gender = dplyr::case_when(
+gender_r %in% c(2, "2") ~ 1L,
+gender_r %in% c(1, "1") ~ 0L,
+TRUE ~ NA_integer_
+),
+isco1 = as.character(isco1c),
+gender_lab = dplyr::if_else(gender == 1, "Women", "Men"),
+educ_raw = as.character(.data[[EDU_VAR]]),
+educ_raw = dplyr::na_if(educ_raw, "N"),
+educ3 = dplyr::case_when(
+educ_raw == "1" ~ "Low education\n(Less than high school)",
+educ_raw == "2" ~ "Medium education\n(High school / vocational)",
+educ_raw == "3" ~ "High education\n(College / University)",
+TRUE ~ NA_character_
+),
+educ3 = factor(
+educ3,
+levels = c(
+"Low education\n(Less than high school)",
+"Medium education\n(High school / vocational)",
+"High education\n(College / University)"
+)
+),
+educ_fac = educ3,
+age_group = factor(
+as.character(.data[[AGE_VAR]]),
+levels = c("1","2","3","4","5"),
+labels = c("≤24", "25–34", "35–44", "45–54", "55+")
+)
+)
+
+fd_tbl <- dat %>%
+dplyr::filter(!is.na(gender), !is.na(isco1)) %>%
+dplyr::count(isco1, gender) %>%
+dplyr::group_by(isco1) %>%
+dplyr::mutate(fshare = n / sum(n)) %>%
+dplyr::summarise(
+n            = sum(n),
+female_share = fshare[gender == 1],
+.groups      = "drop"
+) %>%
+dplyr::mutate(
+female_dominated = as.integer(
+!is.na(female_share) & female_share >= 0.60 & n >= 100
+)
+) %>%
+dplyr::select(isco1, female_dominated)
+
+dat <- dat %>%
+dplyr::left_join(fd_tbl, by = "isco1") %>%
+dplyr::mutate(
+occ_lab = dplyr::if_else(female_dominated == 1, "Female-dominated", "Other")
+)
+
+dat %>%
+summarise(across(
+c(perf, use_best, perf_z, use_best_z, gap_z, gender, female_dominated),
+~ sum(!is.na(.x))
+)) %>%
+print()
+
+rep_mat <- as.matrix(dat[, wt_reps])
+
+des_brr <- svrepdesign(
+weights          = as.formula(paste0("~", wt_final)),
+repweights       = rep_mat,
+type             = "BRR",
+combined.weights = TRUE,
+mse              = TRUE,
+data             = dat
+)
+
+m1_gap     <- svyglm(gap_z ~ gender,            design = des_brr)
+m_gap_educ <- svyglm(gap_z ~ gender * educ3,    design = des_brr)
+m_gap_age  <- svyglm(gap_z ~ gender * age_group,design = des_brr)
+
+cat("\n=== Model 1: gap_z ~ gender ===\n");       print(summary(m1_gap))
+cat("\n=== Model 2: gap_z ~ gender * educ3 ===\n"); print(summary(m_gap_educ))
+cat("\n=== Model 3: gap_z ~ gender * age_group ===\n"); print(summary(m_gap_age))
+
+```
+
+##2.2 Compact regression comparison table (three models)
+
+```{r}
+nice_labels <- c(
+"(Intercept)" = "β₀ (Baseline)",
+"gender"      = "β₁ (Female – Male)",
+"educ3Medium education\n(High school / vocational)" =
+"Medium education (High school/Voc.)",
+"educ3High education\n(College / University)" =
+"High education (College/Univ.)",
+"gender:educ3Medium education\n(High school / vocational)" =
+"Gender × Medium education",
+"gender:educ3High education\n(College / University)" =
+"Gender × High education",
+"age_group25–34" = "Age 25–34",
+"age_group35–44" = "Age 35–44",
+"age_group45–54" = "Age 45–54",
+"age_group55+"   = "Age 55+",
+"gender:age_group25–34" = "Gender × Age 25–34",
+"gender:age_group35–44" = "Gender × Age 35–44",
+"gender:age_group45–54" = "Gender × Age 45–54",
+"gender:age_group55+"   = "Gender × Age 55+"
+)
+
+tab <- modelsummary(
+list(
+"Model 1: Gender only"        = m1_gap,
+"Model 2: Gender × Education" = m_gap_educ,
+"Model 3: Gender × Age group" = m_gap_age
+),
+estimate    = "{estimate}{stars} ({std.error})",
+statistic   = NULL,
+fmt         = 3,
+stars       = c("*" = .10, "**" = .05, "***" = .01),
+coef_rename = nice_labels,
+gof_map     = tribble(
+~raw,        ~clean,        ~fmt,
+"nobs",      "Observations", 0,
+"r.squared", "R²",          3
+),
+output = "kableExtra",
+align  = "lccc",
+escape = FALSE
+)
+
+tab %>%
+kable_styling(
+full_width = FALSE,
+position   = "center",
+font_size  = 11,
+bootstrap_options = c("condensed")
+) %>%
+column_spec(1, width = "6cm")
+
+```
+
+2.3 Weighted CDFs and plots
+
+```{r}
+weighted_cdf_df <- function(df, value_var, weight_var,
+group_vars = "gender_lab",
+grid_n = 400,
+trim_probs = c(0.01, 0.99)) {
+
+stopifnot(all(c(value_var, weight_var, group_vars) %in% names(df)))
+
+base <- df %>%
+filter(!is.na(.data[[value_var]]),
+!is.na(.data[[weight_var]]))
+
+rng <- as.numeric(quantile(base[[value_var]],
+probs = trim_probs,
+na.rm = TRUE))
+xs  <- seq(rng[1], rng[2], length.out = grid_n)
+
+groups_tbl <- base %>%
+distinct(across(all_of(group_vars))) %>%
+arrange(across(all_of(group_vars)))
+
+out <- vector("list", nrow(groups_tbl))
+
+for (i in seq_len(nrow(groups_tbl))) {
+gslice <- base
+for (g in group_vars) {
+gslice <- gslice %>%
+filter(.data[[g]] == groups_tbl[[g]][i])
+}
+
+
+v <- gslice[[value_var]]
+w <- gslice[[weight_var]]
+
+if (!length(v)) {
+  out[[i]] <- tibble(x = numeric(0), cdf = numeric(0))
+  next
+}
+
+w_total  <- sum(w)
+cdf_vals <- vapply(xs,
+                   function(x) sum(w[v <= x]) / w_total,
+                   numeric(1))
+
+out[[i]] <- bind_cols(
+  tibble(x = xs, cdf = cdf_vals),
+  as_tibble(groups_tbl[i, , drop = FALSE])
+)
+
+
+}
+
+bind_rows(out)
+}
+
+wtname <- wt_final[1]
+
+cdf_perf    <- weighted_cdf_df(dat, "perf_z",     wtname, group_vars = "gender_lab")
+cdf_use     <- weighted_cdf_df(dat, "use_best_z", wtname, group_vars = "gender_lab")
+cdf_gap     <- weighted_cdf_df(dat, "gap_z",      wtname, group_vars = "gender_lab")
+cdf_gap_occ <- weighted_cdf_df(dat, "gap_z",      wtname,
+group_vars = c("gender_lab","occ_lab"))
+
+p_perf <- ggplot(cdf_perf, aes(x, cdf, color = gender_lab)) +
+geom_line(linewidth = 1) +
+labs(
+title = "Weighted CDF — Numeracy Performance (z)",
+x = "Performance (z)", y = "Cumulative share", color = "Gender"
+) +
+theme(legend.position = "bottom")
+
+p_use <- ggplot(cdf_use, aes(x, cdf, color = gender_lab)) +
+geom_line(linewidth = 1) +
+labs(
+title = "Weighted CDF — Numeracy Use (z)",
+x = "Use (z)", y = "Cumulative share", color = "Gender"
+) +
+theme(legend.position = "bottom")
+
+p_gap <- ggplot(cdf_gap, aes(x, cdf, color = gender_lab)) +
+geom_line(linewidth = 1) +
+labs(
+title = "Weighted CDF — Confidence–Performance Gap",
+x = "Gap (z)", y = "Cumulative share", color = "Gender"
+) +
+theme(legend.position = "bottom")
+
+p_gap_occ <- ggplot(cdf_gap_occ, aes(x, cdf, color = gender_lab)) +
+geom_line(linewidth = 1) +
+facet_wrap(~ occ_lab) +
+labs(
+title = "Weighted CDF — Gap by Occupation Type",
+x = "Gap (z)", y = "Cumulative share", color = "Gender"
+) +
+theme(legend.position = "bottom")
+
+print(p_perf); print(p_use); print(p_gap); print(p_gap_occ)
+
+ggsave("fig_cdf_performance_weighted.png", p_perf,
+width = 7, height = 5, dpi = 300)
+ggsave("fig_cdf_use_weighted.png",        p_use,
+width = 7, height = 5, dpi = 300)
+ggsave("fig_cdf_gap_weighted.png",        p_gap,
+width = 7, height = 5, dpi = 300)
+ggsave("fig_cdf_gap_by_occ_weighted.png", p_gap_occ,
+width = 7, height = 5, dpi = 300)
+
+```
+
+##2.4 Self-promotion gap by education and age
+
+```{r}
+df_educ <- dat %>%
+filter(!is.na(gap_z),
+!is.na(educ3),
+!is.na(gender_lab))
+
+newdata_gap_educ <- datagrid(
+model  = m_gap_educ,
+gender = c(0, 1),
+educ3  = levels(dat$educ3)
+)
+
+pred_gap_educ <- predictions(m_gap_educ, newdata = newdata_gap_educ) %>%
+mutate(
+gender_text = if_else(gender == 1, "Women", "Men")
+)
+
+p_gap_educ <- ggplot() +
+geom_jitter(
+data = df_educ,
+aes(x = educ3, y = gap_z, colour = gender_lab),
+alpha = 0.20, width = 0.1, size = 1.1
+) +
+geom_line(
+data = pred_gap_educ,
+aes(x = educ3, y = estimate,
+colour = gender_text, group = gender_text),
+linewidth = 1.2
+) +
+geom_hline(yintercept = 0, linetype = "dashed") +
+labs(
+title    = "Self-Promotion Gap by Education Level",
+subtitle = "Outcome = Numeracy use z − performance z (gap_z)",
+x        = "Education Level (3 groups)",
+y        = "Gap (use − perf, z)",
+colour   = "Gender"
+) +
+theme(
+axis.text.x      = element_text(angle = 10, hjust = 0.5),
+legend.position  = "bottom"
+)
+
+print(p_gap_educ)
+ggsave("fig_gap_by_education3_gender.png",
+p_gap_educ, width = 8, height = 5, dpi = 300)
+
+```
+
+```{r}
+newdata_gap_age <- datagrid(
+model     = m_gap_age,
+gender    = c(0, 1),
+age_group = levels(dat$age_group)
+)
+
+pred_gap_age <- predictions(m_gap_age, newdata = newdata_gap_age) %>%
+mutate(
+gender_text = if_else(gender == 1, "Women", "Men")
+)
+
+p_gap_age_scatter <- ggplot() +
+geom_jitter(
+data = dat %>%
+filter(!is.na(age_group), !is.na(gap_z), !is.na(gender)),
+aes(x = age_group, y = gap_z, colour = gender_lab),
+width = 0.15, height = 0, alpha = 0.15, size = 1
+) +
+geom_hline(yintercept = 0, linetype = "dashed") +
+geom_line(
+data = pred_gap_age,
+aes(x = age_group, y = estimate,
+group = gender_text, colour = gender_text),
+linewidth = 1.1
+) +
+labs(
+title    = "Self-Promotion Gap by Age Group",
+subtitle = "Outcome = Numeracy use z − performance z (gap_z)",
+x        = "Age group (AGEG10LFS)",
+y        = "Gap (use − perf, z)",
+colour   = "Gender"
+) +
+theme(
+axis.text.x     = element_text(angle = 0, hjust = 0.5),
+legend.position = "bottom"
+)
+
+print(p_gap_age_scatter)
+ggsave("fig_gap_by_age_scatter_lines.png",
+p_gap_age_scatter, width = 8, height = 5, dpi = 300)
+
+saveRDS(
+list(
+SVY = list(
+m1_gap     = m1_gap,
+m_gap_educ = m_gap_educ,
+m_gap_age  = m_gap_age
+),
+meta = list(
+objective = "Gender gap in self-promotion (gap_z as outcome); PIAAC Canada; BRR weighted"
+)
+),
+"models_piacc_gender_gap_brr.rds"
+)
+
+```
+
+#3. Extension 2: Validating PIAAC Canada Results Using Replication Data
+
+In this extension we test whether patterns from PIAAC Canada align with the replication experiment using linear models on main.dta.
+
+##3.1 Multiple linear regression models with different specifications
+
+```{r}
+set.seed(123)
+
+df <- haven::read_dta("data/main.dta")
+
+df <- df %>%
+mutate(
+female = factor(female),
+age_z  = as.numeric(scale(age)),
+educ_z = as.numeric(scale(educ_num))
+) %>%
+filter(!is.na(t_selfpro))
+
+m1 <- lm(t_selfpro ~ female, data = df)
+m2 <- lm(t_selfpro ~ female + educ_z, data = df)
+m3 <- lm(t_selfpro ~ female + age_z, data = df)
+m4 <- lm(t_selfpro ~ female + educ_z + age_z, data = df)
+
+cat("\n=== Multiple Linear Regression Models with Different Specifications  ===\n")
+cat("Model 1 (Gender only):      Adj R² =", round(summary(m1)$adj.r.squared, 4), "\n")
+cat("Model 2 (+Education):       Adj R² =", round(summary(m2)$adj.r.squared, 4), "\n")
+cat("Model 3 (+Age):             Adj R² =", round(summary(m3)$adj.r.squared, 4), "\n")
+cat("Model 4 (+Education + Age): Adj R² =", round(summary(m4)$adj.r.squared, 4), "\n")
+
+coef_gender1 <- summary(m1)$coefficients["female1", 1]
+coef_gender2 <- summary(m2)$coefficients["female1", 1]
+coef_gender3 <- summary(m3)$coefficients["female1", 1]
+coef_gender4 <- summary(m4)$coefficients["female1", 1]
+
+cat("\nFemale coefficient change:\n")
+cat("  Model 1:", round(coef_gender1, 3), "\n")
+cat("  Model 2:", round(coef_gender2, 3), "\n")
+cat("  Model 3:", round(coef_gender3, 3), "\n")
+cat("  Model 4:", round(coef_gender4, 3), "\n")
+
+```
+
+##3.2 Coefficient comparison table across models
+```{r}
+get_coef <- function(model, model_name){
+broom::tidy(model) %>%
+dplyr::mutate(model = model_name) %>%
+dplyr::select(model, term, estimate, std.error)
+}
+
+coef_df <- dplyr::bind_rows(
+get_coef(m1, "Model (1)"),
+get_coef(m2, "Model (2)"),
+get_coef(m3, "Model (3)"),
+get_coef(m4, "Model (4)")
+)
+
+coef_df <- coef_df %>%
+mutate(term = case_when(
+term == "female1"     ~ "β1",
+term == "educ_z"      ~ "β2",
+term == "age_z"       ~ "β3",
+term == "(Intercept)" ~ "β0",
+TRUE ~ term
+)) %>%
+filter(term %in% c("β1","β2","β3","β0"))
+
+coef_df <- coef_df %>%
+dplyr::mutate(value = sprintf("%.3f\n(%.3f)", estimate, std.error)) %>%
+dplyr::select(term, model, value)
+
+terms_order <- c("β1","β2","β3","β0")
+
+table_wide <- coef_df %>%
+mutate(term = factor(term, levels = terms_order)) %>%
+arrange(term) %>%
+tidyr::pivot_wider(names_from = model, values_from = value)
+
+adj_r2 <- tibble(
+term        = "Adj R²",
+`Model (1)` = sprintf("%.4f", summary(m1)$adj.r.squared),
+`Model (2)` = sprintf("%.4f", summary(m2)$adj.r.squared),
+`Model (3)` = sprintf("%.4f", summary(m3)$adj.r.squared),
+`Model (4)` = sprintf("%.4f", summary(m4)$adj.r.squared)
+)
+
+final_table <- bind_rows(table_wide, adj_r2)
+names(final_table)[1] <- ""
+final_table[is.na(final_table)] <- ""
+
+final_table[is.na(final_table)] <- ""
+names(final_table)[1] <- ""
+
+knitr::kable(
+  final_table,
+  caption = "Table: Coefficient comparison across four models",
+  align   = "lcccc"
+) %>%
+  kableExtra::kable_styling(
+    full_width = FALSE,
+    position   = "center",
+    font_size  = 11,
+    bootstrap_options = c("condensed")
+  )
+
+
+```
+
+##3.3 Gender gap ~ education (continuous): interaction model
+```{r}
+set.seed(123)
+
+df <- df %>%
+mutate(
+female = ifelse(female == 1, "Female", "Male"),
+female = factor(female, levels = c("Male", "Female"))
+)
+
+if(!("educ_z" %in% names(df))) {
+df <- df %>%
+mutate(educ_z = scale(educ_num)[,1])
+}
+
+model_educ <- lm(t_selfpro ~ female * educ_z, data = df)
+
+pred_df <- expand.grid(
+educ_z = seq(min(df$educ_z, na.rm = TRUE),
+max(df$educ_z, na.rm = TRUE),
+length.out = 100),
+female = c("Male", "Female")
+)
+
+pred_df$female <- factor(pred_df$female, levels = c("Male","Female"))
+pred_df$pred   <- predict(model_educ, newdata = pred_df)
+
+```
+
+```{r}
+set.seed(123)
+
+p <- ggplot(pred_df, aes(x = educ_z, y = pred, color = female)) +
+geom_line(size = 1.4) +
+scale_color_manual(
+values = c("Male" = "#2C73B0", "Female" = "#E05252"),
+name   = "Gender"
+) +
+labs(
+title    = "Belief–Performance Gap Across Education (continuous)",
+subtitle = "Model: t_selfpro ~ female * educ_z",
+x        = "Education (z-scored)",
+y        = "Belief − Performance\n(Self-predicted minus actual score)"
+) +
+theme_minimal(base_size = 16) +
+theme(
+plot.title    = element_text(face = "bold", size = 20),
+plot.subtitle = element_text(size = 14),
+axis.title.y  = element_text(vjust = 1.2)
+)
+
+p
+
+ggsave(
+filename = "belief_performance_gap_by_education.png",
+plot     = p,
+width    = 10,
+height   = 6,
+dpi      = 300
+)
+
+```
+
+#Appendix: Extended Methodological Notes for Extension 2 
+(How Education and Age Shape the Gender Confidence Gap) 
+
+
+```{r}
+set.seed(123)
+
+df <- haven::read_dta("data/main.dta") %>%
+mutate(
+female   = as.integer(female),
+female_f = factor(female, levels = c(0,1), labels = c("Male","Female"))
+) %>%
+filter(!is.na(t_selfpro), !is.na(female), !is.na(educ_num))
+
+edu_labels <- c(
+"1 = No schooling / Primary",
+"2 = Some secondary",
+"3 = Completed secondary / High school",
+"4 = Some college / Associate degree",
+"5 = Bachelor’s degree",
+"6 = Some graduate study",
+"7 = Master’s degree",
+"8 = Professional degree",
+"9 = Doctorate (PhD)"
+)
+cat("\nEducation code meanings:\n")
+cat(paste(edu_labels, collapse = "\n"))
+
+by_code <- df %>%
+group_by(educ_num, female) %>%
+summarise(mean_self = mean(t_selfpro, na.rm=TRUE), n = n(), .groups="drop") %>%
+pivot_wider(names_from = female, values_from = c(mean_self,n), names_sep="_") %>%
+mutate(gap_FminusM = mean_self_1 - mean_self_0,
+N_total = n_0 + n_1)
+print(by_code)
+
+scan_tbl <- lapply(1:8, function(cut){
+tmp <- df %>% mutate(group = ifelse(educ_num <= cut, "LowEdu", "HighEdu"))
+mL  <- lm(t_selfpro ~ female, data = filter(tmp, group=="LowEdu"))
+mH  <- lm(t_selfpro ~ female, data = filter(tmp, group=="HighEdu"))
+tibble(
+cutpoint = cut,
+gap_low  = coef(mL)["female"],
+gap_high = coef(mH)["female"],
+diff_gap = gap_high - gap_low,
+n_low    = nrow(filter(tmp, group=="LowEdu")),
+n_high   = nrow(filter(tmp, group=="HighEdu"))
+)
+}) %>% bind_rows()
+
+cat("\n=== Difference in gender gap (High − Low) across cutpoints ===\n")
+print(scan_tbl)
+
+ggplot(scan_tbl, aes(x = cutpoint, y = diff_gap)) +
+geom_hline(yintercept = 0, linetype="dashed", color="gray40") +
+geom_line(color="steelblue", linewidth=1) +
+geom_point(size=2, color="orange") +
+scale_x_continuous(
+breaks = 1:8,
+labels = c(
+"1|2\n(No schooling\n→ Secondary)",
+"2|3\n(Secondary\n→ High School)",
+"3|4\n(High School\n→ College)",
+"4|5\n(College\n→ Bachelor)",
+"5|6\n(Bachelor\n→ Grad)",
+"6|7\n(Grad\n→ Master)",
+"7|8\n(Master\n→ Professional)",
+"8|9\n(Professional\n→ PhD)"
+)
+) +
+labs(
+title = "Change in Gender Gap (High − Low) Across Education Splits",
+subtitle = "Positive values → larger gap in higher-education group",
+x = "Cutpoint (education code ≤ cut = Low group)",
+y = "Δ Gender Gap (High − Low)"
+) +
+theme_minimal(base_size = 14) +
+theme(
+plot.title = element_text(face = "bold", size = 22, hjust = 0.5),
+plot.subtitle = element_text(size = 15, hjust = 0.5),
+axis.title = element_text(size = 14),
+axis.text.x = element_text(size = 11),
+axis.text.y = element_text(size = 11)
+)
+
+ggsave(
+filename = "gender_gap_sensitivity.png",
+width = 10,
+height = 6,
+dpi = 300
+)
+
+```
+## A2. Heterogeneity in the Gender Confidence Gap Across Performance Levels
+
+## A2.1 Compute bin-specific gender gaps
+
+```{r heterogeneity-bins}
+# Use the same regression sample (df_t2a) from Table 2 Panel A analysis
+# Compute belief_gap = belief - performance for heterogeneity analysis
+
+# First, we need to get the actual belief variable (in 0-20 scale, not 0-100)
+# The original data has 'belief' which is the absolute number correct believed
+
+# Re-extract belief from main data matching the filtered sample
+belief_col_name <- pick_col(main, c("belief", "predicted_correct", "belief_num"))
+
+df_hetero_base <- main %>%
+  mutate(
+    female_id = as.numeric(.data[[female_col]]),
+    num_correct_id = as.numeric(.data[[perf_col]]),
+    belief_absolute = as.numeric(.data[[belief_col_name]])  # 0-20 scale
+  )
+
+# Apply same filters as main analysis
+if (best$treat == "on" && length(treat_col) == 1) {
+  vals <- unique(na.omit(df_hetero_base[[treat_col]]))
+  if (all(vals %in% c(0, 1, 0L, 1L))) {
+    df_hetero_base <- filter(df_hetero_base, .data[[treat_col]] == 1)
+  } else {
+    df_hetero_base <- filter(df_hetero_base, is_trueish(.data[[treat_col]]))
+  }
+}
+
+if (!is.na(wave_col) && best$wave != "none") {
+  df_hetero_base <- filter(df_hetero_base, .data[[wave_col]] == 
+                            suppressWarnings(type.convert(best$wave, as.is = TRUE)))
+}
+
+if (best$eval == "on" && length(alleval_col) == 1) {
+  df_hetero_base <- filter(df_hetero_base, .data[[alleval_col]] %in% c(1, "1", TRUE))
+}
+
+if (best$math == "on" && length(allmath_col) == 1) {
+  df_hetero_base <- filter(df_hetero_base, .data[[allmath_col]] %in% c(1, "1", TRUE))
+}
+
+df_hetero <- df_hetero_base %>%
+  mutate(
+    belief_gap = belief_absolute - num_correct_id,  # Both on 0-20 scale
+    gender = if_else(female_id == 1, "Female", "Male"),
+    female = female_id,
+    num_correct = num_correct_id
+  ) %>%
+  select(gender, female, num_correct, belief_gap) %>%
+  drop_na()
+
+# Define performance bins: Low (0-6), Medium (7-13), High (14-20)
+df_hetero <- df_hetero %>%
+  mutate(
+    perf_bin = cut(
+      num_correct,
+      breaks = c(-0.5, 6.5, 13.5, 20.5),
+      labels = c("Low (0–6)", "Medium (7–13)", "High (14–20)")
+    )
+  )
+
+# Compute bin-specific gender means and gender gap (Male - Female)
+bin_stats <- df_hetero %>%
+  group_by(perf_bin, gender) %>%
+  summarise(
+    n = n(),
+    mean_gap = mean(belief_gap, na.rm = TRUE),
+    var_gap = var(belief_gap, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = gender,
+    values_from = c(n, mean_gap, var_gap)
+  ) %>%
+  mutate(
+    # Gender gap: Male mean - Female mean
+    delta = mean_gap_Male - mean_gap_Female,
+    # Standard error of the difference
+    se_delta = sqrt(var_gap_Male / n_Male + var_gap_Female / n_Female),
+    # 95% confidence interval
+    ci_lo = delta - 1.96 * se_delta,
+    ci_hi = delta + 1.96 * se_delta
+  ) %>%
+  mutate(
+    perf_bin = factor(
+      perf_bin,
+      levels = c("Low (0–6)", "Medium (7–13)", "High (14–20)")
+    )
+  ) %>%
+  arrange(perf_bin)
+
+# Display results
+print(bin_stats)
+
+# Save table
+write_csv(bin_stats, "belief_gap_gender_diff_by_perf_bin.csv")
+```
+
+## A2.2 Visualize ECDFs by performance band
+
+```{r heterogeneity-ecdf, fig.width=12, fig.height=4.5}
+# Create ECDF plots faceted by performance band
+# This shows how the gender gap in belief-performance varies across ability levels
+
+p_hetero <- df_hetero %>%
+  mutate(gender = factor(gender, levels = c("Female", "Male"))) %>%
+  ggplot(aes(x = belief_gap, color = gender, linetype = gender)) +
+  stat_ecdf(linewidth = 1.1) +
+  facet_wrap(~ perf_bin, ncol = 3, scales = "free_x") +
+  geom_vline(xintercept = 0, color = "red", alpha = 0.6, linewidth = 0.5) +
+  scale_color_manual(values = c("Female" = "black", "Male" = "blue")) +
+  scale_linetype_manual(values = c("Female" = "solid", "Male" = "dashed")) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    strip.background = element_rect(fill = "grey90", color = "black"),
+    strip.text = element_text(face = "bold", size = 11)
+  ) +
+  labs(
+    title = "Heterogeneity Analysis: Belief – Performance (ECDF) by Performance Band",
+    x = "Belief – Performance",
+    y = "CDF",
+    color = "Gender",
+    linetype = "Gender"
+  )
+
+print(p_hetero)
+
+# Save figure
+ggsave("figure_ecdf_belief_minus_performance_by_perf_bin.pdf",
+       p_hetero, width = 12, height = 4.5)
+ggsave("figure_ecdf_belief_minus_performance_by_perf_bin.png",
+       p_hetero, width = 12, height = 4.5, dpi = 300)
+```
