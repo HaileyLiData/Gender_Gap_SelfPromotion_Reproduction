@@ -53,6 +53,7 @@ and to explore whether such gaps persist under different model assumptions.
 ├── README.md                                 # Project overview  
 └── LICENSE                                   # MIT license
 
+---
 
 ## 🚀 Future Extensions
 - Apply Bayesian hierarchical modeling for subgroup heterogeneity  
