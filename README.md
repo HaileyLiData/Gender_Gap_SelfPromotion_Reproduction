@@ -40,3 +40,22 @@ and to explore whether such gaps persist under different model assumptions.
 ---
 
 ## 📂 Repository Structure
+
+├── gender_gap_project/  
+│   ├── data/                  # Raw and processed datasets  
+│   ├── scripts/               # Data cleaning and regression scripts  
+│   ├── outputs/               # Figures, tables, and model outputs  
+│   └── README_notes.md        # Additional implementation notes  
+│
+├── gender_gap_project_final_report.pdf      # Final analytical report  
+├── gender_gap_project_appendix.pdf          # Supplementary appendix  
+├── gender_gap_project_presentation.pptx     # Presentation slides  
+├── README.md                                 # Project overview  
+└── LICENSE                                   # MIT license
+
+
+## 🚀 Future Extensions
+- Apply Bayesian hierarchical modeling for subgroup heterogeneity  
+- Explore cross-cultural variation in self-promotion behavior  
+- Compare predictive vs. explanatory modeling approaches  
+- Extend analysis using NLP-based sentiment or linguistic framing measures
