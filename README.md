@@ -42,16 +42,16 @@ and to explore whether such gaps persist under different model assumptions.
 ## 📂 Repository Structure
 
 ├── gender_gap_project/  
-│   ├── data/                  # Raw and processed datasets  
-│   ├── scripts/               # Data cleaning and regression scripts  
-│   ├── outputs/               # Figures, tables, and model outputs  
-│   └── README_notes.md        # Additional implementation notes  
+│   ├── data/                 # Raw and processed datasets used in the analysis  
+│   ├── outputs/              # Regression outputs, figures, and analytical results  
+│   ├── team_9_code.Rmd       # Main R Markdown file containing the full analysis pipeline  
+│   └── Readme.txt            # Supplementary project notes and execution details  
 │
-├── gender_gap_project_final_report.pdf      # Final analytical report  
-├── gender_gap_project_appendix.pdf          # Supplementary appendix  
-├── gender_gap_project_presentation.pptx     # Presentation slides  
-├── README.md                                 # Project overview  
-└── LICENSE                                   # MIT license
+├── gender_gap_project_final_report.pdf     # Final analytical report  
+├── gender_gap_project_appendix.pdf         # Supplementary appendix  
+├── gender_gap_project_presentation.pptx    # Presentation slides  
+├── README.md                                # Repository overview  
+└── LICENSE                                  # MIT license
 
 ---
 
